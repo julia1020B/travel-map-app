@@ -2,8 +2,16 @@ import React, { useEffect, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
-const STORAGE_KEY = "travel_places_v3";
-const WS_URL = "wss://example.com/ws/travel";
+import {
+  collection,
+  addDoc,
+  onSnapshot,
+  updateDoc,
+  deleteDoc,
+  doc
+} from "firebase/firestore";
+
+import { db } from "./firebase";
 
 const DB_NAME = "travel_db";
 const DB_STORE = "images";
@@ -67,14 +75,7 @@ const activeIcon = L.divIcon({
   iconAnchor: [11, 11],
 });
 
-function tryLoadPlaces() {
-  try {
-    const data = localStorage.getItem(STORAGE_KEY);
-    return data ? JSON.parse(data) : [];
-  } catch {
-    return [];
-  }
-}
+
 
 // 🔗 link parser
 const urlRegex = /(https?:\/\/[^\s]+)/g;
@@ -103,24 +104,30 @@ function renderNoteWithLinks(text) {
 export default function App() {
   const mapRef = useRef(null);
   const mapDivRef = useRef(null);
-  const wsRef = useRef(null);
 
-  const [places, setPlaces] = useState(() => tryLoadPlaces());
+  const [places, setPlaces] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [showPlanOnMap, setShowPlanOnMap] = useState(false);
   const [lightboxImg, setLightboxImg] = useState(null);
   const [imageCache, setImageCache] = useState({});
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(places));
-  }, [places]);
+useEffect(() => {
+  const unsub = onSnapshot(
+    collection(db, "places"),
+    (snapshot) => {
+      const data = snapshot.docs.map(d => ({
+        id: d.id,
+        ...d.data()
+      }));
 
-  useEffect(() => {
-    try {
-      wsRef.current = new WebSocket(WS_URL);
-    } catch {}
-  }, []);
+      setPlaces(data);
+    }
+  );
+
+  return () => unsub();
+}, []);
+
 
   useEffect(() => {
     async function loadAll() {
@@ -145,16 +152,13 @@ export default function App() {
     }).addTo(mapRef.current);
 
     mapRef.current.on("click", (e) => {
-      const newPlace = {
-        id: Date.now(),
-        name: "Nowe miejsce",
-        lat: e.latlng.lat,
-        lng: e.latlng.lng,
-        note: "",
-        images: [],
-      };
-      setPlaces(p => [...p, newPlace]);
-      setActiveId(newPlace.id);
+      addDoc(collection(db, "places"), {
+  name: "Nowe miejsce",
+  lat: e.latlng.lat,
+  lng: e.latlng.lng,
+  note: "",
+  images: [],
+});
     });
   }, []);
 
@@ -197,21 +201,24 @@ export default function App() {
 
       marker.on("dragend", e => {
         const pos = e.target.getLatLng();
-        setPlaces(prev => prev.map(p =>
-          p.id === place.id ? { ...p, lat: pos.lat, lng: pos.lng } : p
-        ));
+        updateDoc(doc(db, "places", place.id), {
+  lat: pos.lat,
+  lng: pos.lng
+});
       });
     });
   }, [places, activeId, imageCache]);
 
-  const updatePlace = (id, field, value) => {
-    setPlaces(prev => prev.map(p => p.id === id ? { ...p, [field]: value } : p));
-  };
+const updatePlace = async (id, field, value) => {
+  await updateDoc(doc(db, "places", id), {
+    [field]: value
+  });
+};
 
-  const deletePlace = (id) => {
-    setPlaces(prev => prev.filter(p => p.id !== id));
-    setActiveId(null);
-  };
+  const deletePlace = async (id) => {
+  await deleteDoc(doc(db, "places", id));
+  setActiveId(null);
+};
 
   return (
     <div className="w-screen h-screen relative overflow-hidden">
